@@ -27,7 +27,7 @@ set(CMAKE_C_FLAGS "-mcpu=cortex-m3 -mthumb -std=c99")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fdata-sections -ffunction-sections -mlittle-endian -g3")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fno-move-loop-invariants -fsigned-char -ffreestanding")
 
-set(LINKER_FLAGS "-nostdlib -nostartfiles")
+set(LINKER_FLAGS " -nostartfiles")
 set(LINKER_FLAGS "${LINKER_FLAGS} -Xlinker -Map -Xlinker ${TARGET_NAME}.map ")
 # Choose ld file for your MCU carefully
 set(LINKER_FLAGS "${LINKER_FLAGS} -Xlinker -T ${CMAKE_CURRENT_SOURCE_DIR}/stm32f103c8.ld")
@@ -80,3 +80,4 @@ add_custom_command(OUTPUT flash_target
         DEPENDS ${BIN_TARGET})
 
 add_custom_target(flash DEPENDS flash_target)
+target_link_libraries(stm32_template m)

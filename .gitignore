@@ -7,6 +7,10 @@ build/
 *.elf
 *.hex
 *.map
+.vscode/*
+*.tmpbd186
+*.pzw
+*.cmake
 CMakeCache.txt
 [M,m]akefile
 
