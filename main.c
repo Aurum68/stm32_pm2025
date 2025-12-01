@@ -10,6 +10,8 @@
 #define BTN_DOWN_PORT GPIOB
 #define BTN_DOWN_PIN 0
 
+#define SYS_CLK_FREQ 8000000.0f
+
 float curr_freq = FREQ_START;
 
 void delay(uint32_t ticks) {
@@ -18,33 +20,49 @@ void delay(uint32_t ticks) {
 	}
 }
 
-void delay_blink(float freq){
-	float period = 1.0f / freq;
-	float half_period = period / 2.0f;
-
-	const uint32_t SysCLK_Hz = 8000000UL;
-	uint32_t ticks = (uint32_t)(half_period * (SysCLK_Hz / 8));
-
-	delay(ticks);
-}
-
 uint8_t read_button(GPIO_TypeDef* port, uint8_t pin){
 	return ((port->IDR & (1 << pin)) == 0);
 }
 
 uint8_t debounce(GPIO_TypeDef* port, uint8_t pin){
-	if (read_button(port, pin))
-	{
-		delay(20000);
-		if (read_button(port, pin))
-		{
-			while (read_button(port, pin));
+	if (read_button(port, pin)) {
+		delay(20000); // Небольшая задержка для антидребезга
+		if (read_button(port, pin)) {
+			while (read_button(port, pin)); // Ждем, пока кнопка будет отпущена
 			return 1;
 		}
-		
 	}
 	return 0;
-	
+}
+
+
+void update_timer_freq(float freq) {
+    float interrupt_freq = freq * 2.0f;
+
+    uint16_t arr_value = (uint16_t)((1000.0f / interrupt_freq) - 1.0f);
+
+    TIM2->ARR = arr_value;
+}
+
+void timer_init(void) {
+    RCC->APB1ENR |= RCC_APB1ENR_TIM2EN;
+
+    TIM2->PSC = 7999;
+
+    update_timer_freq(curr_freq);
+
+    TIM2->DIER |= TIM_DIER_UIE;
+
+    TIM2->CR1 |= TIM_CR1_CEN;
+
+    NVIC_EnableIRQ(TIM2_IRQn);
+}
+
+void TIM2_IRQHandler(void) {
+    if (TIM2->SR & TIM_SR_UIF) {
+        TIM2->SR &= ~TIM_SR_UIF;
+        GPIOC->ODR ^= (1U << 13U);
+    }
 }
 
 void SPI1_Init(void)
@@ -155,60 +173,45 @@ void SSD1306_DrawChessBoard(void)
 }
 
 int __attribute((noreturn)) main(void) {
-	// Enable clock for AFIO
-	RCC->APB2ENR |= RCC_APB2ENR_AFIOEN;
-	// Enable clock for GPIOC
-	RCC->APB2ENR |= RCC_APB2ENR_IOPCEN;
+	RCC->APB2ENR |= RCC_APB2ENR_AFIOEN | RCC_APB2ENR_IOPAEN | RCC_APB2ENR_IOPBEN | RCC_APB2ENR_IOPCEN;
 
-    RCC->APB2ENR |= RCC_APB2ENR_IOPBEN;
+	GPIOC->CRH &= ~GPIO_CRH_CNF13;
+	GPIOC->CRH |= GPIO_CRH_MODE13_0;
 
-	RCC->APB2ENR |= RCC_APB2ENR_IOPAEN;
-	// Enable PC13 push-pull mode
-	GPIOC->CRH &= ~GPIO_CRH_CNF13; //clear cnf bits
-	GPIOC->CRH |= GPIO_CRH_MODE13_0; //Max speed = 10Mhz
+	GPIOA->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0); // Сброс битов
+	GPIOA->CRL |= GPIO_CRL_CNF0_1;                  // CNF_1 = 1, CNF_0 = 0 -> Input with pull-up/pull-down
+	GPIOA->ODR |= (1U << BTN_UP_PIN);               // Включаем внутренний pull-up резистор
 
-	GPIOA->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0);
-	GPIOA->CRL |= (GPIO_CRL_CNF0_1);
-	GPIOA->ODR |= (1U<<0);
-
-	GPIOB->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0); 
-    GPIOB->CRL |= (GPIO_CRL_CNF0_1);                
+	GPIOB->CRL &= ~(GPIO_CRL_CNF0 | GPIO_CRL_MODE0); // Сброс битов
+	GPIOB->CRL |= GPIO_CRL_CNF0_1;                  // CNF_1 = 1, CNF_0 = 0 -> Input with pull-up/pull-down
+	GPIOB->ODR |= (1U << BTN_DOWN_PIN);                   
 
     SPI1_Init();
     SSD1306_Init();
     SSD1306_DrawChessBoard();
 
+    timer_init();
+
     while (1) {
-		if (debounce(BTN_UP_PORT, BTN_UP_PIN))
-		{
-			if (curr_freq < FREQ_MAX)
-			{
-				curr_freq += 2.0f;
-				if (curr_freq > FREQ_MAX)
-				{
+		if (debounce(BTN_UP_PORT, BTN_UP_PIN)) {
+			if (curr_freq < FREQ_MAX) {
+				curr_freq *= 2.0f; // Умножаем для более заметного эффекта
+				if (curr_freq > FREQ_MAX) {
 					curr_freq = FREQ_MAX;
 				}
-				
+                update_timer_freq(curr_freq); // Обновляем таймер!
 			}
-			
 		}
 
-		if (debounce(BTN_DOWN_PORT, BTN_DOWN_PIN))
-		{
-			if (curr_freq > FREQ_MIN)
-			{
-				curr_freq -= 2.0f;
-				if (curr_freq < FREQ_MIN)
-				{
+		if (debounce(BTN_DOWN_PORT, BTN_DOWN_PIN)) {
+			if (curr_freq > FREQ_MIN) {
+				curr_freq /= 2.0f; // Делим для более заметного эффекта
+				if (curr_freq < FREQ_MIN) {
 					curr_freq = FREQ_MIN;
 				}
-				
+                update_timer_freq(curr_freq); // Обновляем таймер!
 			}
-			
 		}
-
-	    GPIOC->ODR ^= (1U<<13U); //U -- unsigned suffix (to avoid syntax warnings in IDE)
-		delay_blink(curr_freq);
     }
 }
 
